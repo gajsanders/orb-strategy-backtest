@@ -1,0 +1,15 @@
+//#strategy config.json
+// claude_desktop_config.json
+{
+    "mcpServers": {
+        "orb_strategy": {
+            "command": "python",
+            "args": [
+                "strategy_orb_mcp.py"
+            ],
+            "environment": {
+                "PYTHONPATH": "${PWD}"
+            }
+        }
+    }
+}
