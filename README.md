@@ -114,4 +114,5 @@ This trading strategy is for educational purposes only. Past performance is not 
 ## Acknowledgments
 
 - Alpaca Markets for providing the trading API
-- The trading community for insights and feedback 
+- The trading community for insights and feedback
+- This strategy was inspired by the Opening Range Breakout strategy explained in [this YouTube video](https://youtu.be/GEnKQ834U1c?si=MkBGil_6TfEK71bF) 
