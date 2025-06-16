@@ -4,7 +4,11 @@ This project implements an Opening Range Breakout (ORB) trading strategy using t
 
 ## Features
 
-- **Opening Range Breakout Strategy**: Identifies and trades breakouts from the first 15 minutes of trading
+- **Opening Range Breakout Strategy**: Identifies and trades breakouts from the first 30 minutes of trading
+- **Dynamic Risk Management**: 
+  - Configurable ORB duration (15, 30, or 60 minutes)
+  - Dynamic trailing stops based on volatility
+  - Volume-based confirmation filters
 - **Paper Trading Support**: Uses Alpaca's paper trading environment for safe testing
 - **Backtesting Capabilities**: Includes comprehensive backtesting functionality
 - **Performance Analytics**: Detailed trade analysis including:
@@ -13,6 +17,7 @@ This project implements an Opening Range Breakout (ORB) trading strategy using t
   - Drawdown calculations
   - Streak analysis
   - Time-based trade distribution
+  - Volatility-adjusted performance metrics
 
 ## Prerequisites
 
@@ -53,25 +58,36 @@ import os
 # Load environment variables
 load_dotenv()
 
-# Initialize strategy
+# Initialize strategy with optimized parameters
 strategy = ORBStrategy(
-    os.getenv("ALPACA_PAPER_API_KEY"),
-    os.getenv("ALPACA_PAPER_API_SECRET")
+    data,
+    entry_mode='immediate',
+    orb_duration=30,
+    use_volume_filter=True,
+    trailing_stop=True,
+    trailing_stop_activation=0.4
 )
 
 # Run backtest
-trades = strategy.backtest("SPY_20250501_20250531.csv")
+trades, equity, timestamps = strategy.backtest()
 
 # Analyze performance
-strategy.analyze_performance(trades)
+stats = strategy.analyze_performance(trades)
 ```
 
 ### Strategy Parameters
 
-The strategy uses the following default parameters:
-- Opening Range: First 15 minutes of trading
-- Breakout Confirmation: Price must break above/below the range and retest
-- Exit: End of day (4:00 PM ET)
+The strategy uses the following optimized parameters:
+- Opening Range: First 30 minutes of trading
+- Volume Filter: Requires 20% above average volume for confirmation
+- Dynamic Trailing Stop: 
+  - Base activation at 40% of profit target
+  - Adjusts based on market volatility
+  - More aggressive in high volatility (70% of base)
+  - Less aggressive in low volatility (130% of base)
+- Entry Modes:
+  - Immediate: Enters on breakout confirmation
+  - Breakout Hold: Requires 3-bar confirmation
 
 ## Project Structure
 
@@ -81,6 +97,7 @@ The strategy uses the following default parameters:
 ├── download_historical_data.py  # Data download utility
 ├── requirements.txt        # Project dependencies
 ├── .env.example           # Example environment variables
+├── backtest_reports/      # Directory for backtest results
 └── README.md             # This file
 ```
 
@@ -94,6 +111,19 @@ The strategy provides detailed performance analysis including:
 - Trade duration analysis
 - Time-based trade distribution
 - Streak analysis
+- Volatility-adjusted metrics
+- Dynamic trailing stop effectiveness
+
+## Recent Updates
+
+### Version 2.0.0
+- Implemented dynamic trailing stops based on market volatility
+- Added volume confirmation filter
+- Optimized ORB duration to 30 minutes
+- Improved entry conditions with 3-bar confirmation
+- Enhanced backtesting with parallel processing
+- Added detailed performance reporting
+- Focused on best-performing tickers (XLK, SMH)
 
 ## Contributing
 
