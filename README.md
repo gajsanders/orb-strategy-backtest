@@ -1,6 +1,6 @@
-# Opening Range Breakout (ORB) Trading Strategy
+# Opening Range Breakout (ORB) Strategy
 
-This project implements an Opening Range Breakout (ORB) trading strategy using the Alpaca trading API. The strategy is designed to identify and trade breakouts from the opening range of trading sessions.
+A sophisticated trading strategy implementing Opening Range Breakout with enhanced volume analysis and dynamic profit targets.
 
 ## Features
 
@@ -116,22 +116,104 @@ The strategy provides detailed performance analysis including:
 
 ## Recent Updates
 
-### Version 2.0.0
-- Implemented dynamic trailing stops based on market volatility
-- Added volume confirmation filter
-- Optimized ORB duration to 30 minutes
-- Improved entry conditions with 3-bar confirmation
-- Enhanced backtesting with parallel processing
-- Added detailed performance reporting
-- Focused on best-performing tickers (XLK, SMH)
+### Enhanced Volume Analysis
+- Implemented multi-factor volume confirmation:
+  - Volume trend analysis (20-period vs 40-period moving average)
+  - Volume momentum measurement
+  - Increasing volume pattern detection
+  - Recent volume average comparison
 
-## Contributing
+### Dynamic Profit Targets
+- Added volatility-based profit target adjustment:
+  - Low volatility: 1.5x risk
+  - Medium volatility: 2.0x risk
+  - High volatility: 2.5x risk
+- Market trend consideration:
+  - Strong trend: 20% increase in target
+  - Weak trend: 20% decrease in target
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+### Performance Metrics
+- Profit Factor: ~1.8-2.2
+- Average Win: $2,550-4,400 per trade
+- Average Loss: $1,360-2,640 per trade
+- Position Sizing: 1700-2200 shares (dynamic based on volatility)
+
+## Strategy Components
+
+### Entry Conditions
+1. Opening Range Breakout
+2. Volume Confirmation
+   - Above average volume
+   - Increasing volume trend
+   - Strong volume momentum
+3. Volatility Filter
+   - Dynamic thresholds based on market conditions
+   - Ticker-specific adjustments
+
+### Risk Management
+- Dynamic position sizing
+- Trailing stops with volatility adjustment
+- Scale-out levels for partial profit taking
+- Maximum risk per trade: 2% of account
+
+### Exit Conditions
+1. Stop Loss
+   - Initial: Based on ORB levels
+   - Trailing: Activated at 40% of target profit
+2. Profit Target
+   - Dynamic based on volatility
+   - Adjusted for market trend
+3. Scale-out Levels
+   - Partial exits at 50%, 75%, and 100% of target
+
+## Usage
+
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Set up environment variables:
+```bash
+ALPACA_PAPER_API_KEY=your_key
+ALPACA_PAPER_API_SECRET=your_secret
+```
+
+3. Run backtest:
+```bash
+python strategy_orb_mcp.py
+```
+
+## Configuration
+
+Key parameters can be adjusted in the `main()` function:
+- `orb_duration`: Opening range period (default: 30 minutes)
+- `risk_per_trade`: Maximum risk per trade (default: 2%)
+- `profit_target_multiplier`: Base profit target multiplier (default: 1.5)
+- `trailing_stop_activation`: When to activate trailing stop (default: 0.4)
+
+## Performance Analysis
+
+The strategy generates detailed performance reports including:
+- Equity curve
+- Trade markers on price chart
+- Win rate and profit factor
+- Average win/loss metrics
+- Position sizing analysis
+
+Reports are saved in the `backtest_reports` directory with timestamps.
+
+## Future Improvements
+
+1. Profit Factor Enhancement:
+   - Tighter stop losses during high volatility
+   - Partial profit taking at 1:1 risk-reward
+   - Trend strength confirmation
+
+2. Risk Management:
+   - Maximum position size limits
+   - Daily loss limits
+   - Correlation-based position sizing
 
 ## License
 

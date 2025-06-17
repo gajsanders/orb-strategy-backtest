@@ -30,26 +30,43 @@ class ORBStrategy:
     def __init__(self, data, entry_mode='immediate', risk_per_trade=0.02, 
                  min_stop_distance=0.005, profit_target_multiplier=1.5,
                  orb_duration=30, use_volume_filter=True,
-                 trailing_stop=True, trailing_stop_activation=0.5):
+                 trailing_stop=True, trailing_stop_activation=0.4,
+                 use_volatility_filter=True, scale_out_levels=[0.5, 0.75, 1.0],
+                 ticker=None):
         self.data = data
         self.entry_mode = entry_mode
         self.risk_per_trade = risk_per_trade
         self.min_stop_distance = min_stop_distance
         self.profit_target_multiplier = profit_target_multiplier
-        self.orb_duration = orb_duration  # Duration in minutes for ORB calculation
+        self.orb_duration = orb_duration
         self.use_volume_filter = use_volume_filter
         self.trailing_stop = trailing_stop
-        self.trailing_stop_activation = trailing_stop_activation  # % of profit target to activate trailing stop
+        self.trailing_stop_activation = trailing_stop_activation
+        self.use_volatility_filter = use_volatility_filter
+        self.scale_out_levels = scale_out_levels
+        self.ticker = ticker
         self.trades = []
-        self.orb_cache = {}  # Cache for ORB calculations
+        self.orb_cache = {}
         
-        # Calculate additional indicators if needed
+        # Calculate additional indicators
         if self.use_volume_filter:
             self.data['volume_sma'] = self.data['volume'].rolling(window=20).mean()
+            self.data['volume_trend'] = self.data['volume'].rolling(window=20).mean() > self.data['volume'].rolling(window=40).mean()
+            self.data['volume_momentum'] = self.data['volume'] / self.data['volume'].rolling(window=20).mean()
         
-        # Calculate volatility for dynamic trailing stop
+        # Calculate volatility metrics
         self.data['atr'] = self.calculate_atr(14)
         self.data['volatility'] = self.data['atr'] / self.data['close']
+        self.data['volatility_sma'] = self.data['volatility'].rolling(window=20).mean()
+        
+        # Calculate volatility thresholds
+        self.data['volatility_ratio'] = self.data['volatility'] / self.data['volatility_sma']
+        self.data['is_volatile'] = self.data['volatility_ratio'] > 1.5  # 50% above average volatility
+        
+        # Calculate additional indicators for entry conditions
+        self.data['sma_10'] = self.data['close'].rolling(window=10).mean()
+        self.data['sma_20'] = self.data['close'].rolling(window=20).mean()
+        self.data['rsi'] = self.calculate_rsi(14)
 
     def calculate_atr(self, period):
         """Calculate Average True Range for volatility measurement"""
@@ -98,16 +115,124 @@ class ORBStrategy:
         self.orb_cache[date] = (orb_high, orb_low, avg_volume)
         return orb_high, orb_low, avg_volume
 
-    def check_entry_conditions(self, current_price, current_volume, orb_high, orb_low, avg_volume, i):
-        """Check all entry conditions including volume filter"""
+    def check_volatility_conditions(self, current_volatility, current_volatility_ratio, ticker):
+        """Check if volatility conditions are suitable for trading"""
+        if not self.use_volatility_filter:
+            return True
+            
+        # Different volatility thresholds for different tickers
+        if ticker == 'SMH':
+            # More conservative for SMH
+            return current_volatility_ratio < 1.3  # Only trade in lower volatility
+        else:
+            # Standard threshold for other tickers
+            return current_volatility_ratio < 1.5
+
+    def calculate_scale_out_levels(self, entry_price, stop_loss, direction):
+        """Calculate price levels for scaling out of positions"""
+        if not self.scale_out_levels:
+            return None
+        
+        risk = abs(entry_price - stop_loss)
+        if direction == 'LONG':
+            return [
+                entry_price + (risk * self.profit_target_multiplier * level)
+                for level in self.scale_out_levels
+            ]
+        else:
+            return [
+                entry_price - (risk * self.profit_target_multiplier * level)
+                for level in self.scale_out_levels
+            ]
+
+    def update_position_size(self, current_trade, current_price):
+        """Update position size based on scale-out levels"""
+        if not current_trade.get('scale_out_levels'):
+            return current_trade['position_size']
+            
+        remaining_size = current_trade['position_size']
+        for level in current_trade['scale_out_levels']:
+            if current_trade['direction'] == 'LONG' and current_price >= level:
+                remaining_size = int(remaining_size * 0.5)  # Reduce by 50% at each level
+            elif current_trade['direction'] == 'SHORT' and current_price <= level:
+                remaining_size = int(remaining_size * 0.5)
+                
+        return remaining_size
+
+    def calculate_rsi(self, period=14):
+        """Calculate Relative Strength Index"""
+        delta = self.data['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+
+    def check_volume_conditions(self, current_volume, avg_volume, i):
+        """Enhanced volume analysis with trend and momentum"""
+        if i < 20:  # Need enough data for calculations
+            return True
+        
+        # Calculate volume trend
+        volume_trend = self.data['volume_trend'].iloc[i]
+        
+        # Calculate volume momentum
+        volume_momentum = self.data['volume_momentum'].iloc[i] > 1.2
+        
+        # Check for increasing volume
+        volume_increasing = all(self.data['volume'].iloc[i-j] < current_volume 
+                              for j in range(1, 4))
+        
+        # Calculate recent volume average
+        recent_volume_avg = self.data['volume'].iloc[i-20:i].mean()
+        volume_above_recent = current_volume > recent_volume_avg
+        
+        return (volume_trend and volume_momentum and 
+                volume_increasing and volume_above_recent)
+
+    def calculate_dynamic_profit_target(self, entry_price, stop_loss, current_volatility):
+        """Calculate profit target based on volatility and market conditions"""
+        base_risk = abs(entry_price - stop_loss)
+        
+        # Calculate volatility-based multiplier
+        volatility_multiplier = 1.0
+        if current_volatility < 0.01:  # Low volatility
+            volatility_multiplier = 1.5
+        elif current_volatility < 0.02:  # Medium volatility
+            volatility_multiplier = 2.0
+        else:  # High volatility
+            volatility_multiplier = 2.5
+        
+        # Calculate market trend
+        if len(self.data) >= 20:
+            short_ma = self.data['close'].rolling(window=10).mean().iloc[-1]
+            long_ma = self.data['close'].rolling(window=20).mean().iloc[-1]
+            market_trend = 'strong' if short_ma > long_ma * 1.02 else 'weak' if short_ma < long_ma * 0.98 else 'neutral'
+            
+            # Adjust multiplier based on market trend
+            if market_trend == 'strong':
+                volatility_multiplier *= 1.2
+            elif market_trend == 'weak':
+                volatility_multiplier *= 0.8
+        
+        return base_risk * volatility_multiplier
+
+    def check_entry_conditions(self, current_price, current_volume, orb_high, orb_low, avg_volume, i, ticker):
+        """Check all entry conditions including enhanced volume filter"""
         # Basic price breakout conditions
         long_breakout = current_price > orb_high
         short_breakout = current_price < orb_low
         
-        # Volume confirmation
+        # Enhanced volume confirmation
         volume_confirmed = True
         if self.use_volume_filter and avg_volume is not None:
-            volume_confirmed = current_volume > avg_volume * 1.2  # 20% above average volume
+            volume_confirmed = self.check_volume_conditions(current_volume, avg_volume, i)
+        
+        # Volatility check
+        current_volatility = self.data['volatility'].iloc[i]
+        current_volatility_ratio = self.data['volatility_ratio'].iloc[i]
+        volatility_confirmed = self.check_volatility_conditions(
+            current_volatility, current_volatility_ratio, ticker
+        )
         
         # For breakout_hold mode, require price to stay above/below breakout level for 3 bars
         if self.entry_mode == 'breakout_hold':
@@ -117,7 +242,8 @@ class ORBStrategy:
                 if short_breakout:
                     short_breakout = all(self.data['close'].iloc[i-j] < orb_low for j in range(1, 4))
         
-        return long_breakout and volume_confirmed, short_breakout and volume_confirmed
+        return (long_breakout and volume_confirmed and volatility_confirmed,
+                short_breakout and volume_confirmed and volatility_confirmed)
 
     def update_trailing_stop(self, current_trade, current_price, current_volatility):
         """Update trailing stop if conditions are met"""
@@ -161,7 +287,7 @@ class ORBStrategy:
         """Run backtest with optimized performance"""
         trades = []
         current_trade = None
-        cumulative_equity = [100000]  # Starting equity
+        cumulative_equity = [100000]
         equity_timestamps = [self.data.index[0]]
         
         # Vectorized operations for price data
@@ -190,9 +316,16 @@ class ORBStrategy:
             if current_trade:
                 # Update trailing stop if enabled
                 if self.trailing_stop:
-                    current_trade['stop_loss'] = self.update_trailing_stop(current_trade, current_price, self.data['volatility'].iloc[i])
+                    current_trade['stop_loss'] = self.update_trailing_stop(
+                        current_trade, current_price, self.data['volatility'].iloc[i]
+                    )
                 
-                # Vectorized exit conditions
+                # Update position size based on scale-out levels
+                current_trade['position_size'] = self.update_position_size(
+                    current_trade, current_price
+                )
+                
+                # Check exit conditions
                 if (current_trade['direction'] == 'LONG' and 
                     (current_price <= current_trade['stop_loss'] or 
                      current_price >= current_trade['profit_target'])):
@@ -219,42 +352,56 @@ class ORBStrategy:
             # Check for new trade entries
             if not current_trade:
                 long_entry, short_entry = self.check_entry_conditions(
-                    current_price, current_volume, orb_high, orb_low, avg_volume, i
+                    current_price, current_volume, orb_high, orb_low, avg_volume, i, self.ticker
                 )
                 
                 if long_entry:
                     stop_loss = max(orb_low, current_price * (1 - self.min_stop_distance))
                     position_size = self.calculate_position_size(current_price, stop_loss)
+                    profit_target = current_price + self.calculate_dynamic_profit_target(
+                        current_price, stop_loss, self.data['volatility'].iloc[i]
+                    )
+                    scale_out_levels = self.calculate_scale_out_levels(
+                        current_price, stop_loss, 'LONG'
+                    )
                     current_trade = {
                         'direction': 'LONG',
                         'entry_time': timestamps[i],
                         'entry_price': current_price,
                         'stop_loss': stop_loss,
-                        'profit_target': current_price + (current_price - stop_loss) * self.profit_target_multiplier,
-                        'position_size': position_size
+                        'profit_target': profit_target,
+                        'position_size': position_size,
+                        'scale_out_levels': scale_out_levels
                     }
                     logger.info(f"[TRADE] LONG Entry at {timestamps[i]}")
                     logger.info(f"Entry Price: ${current_price:.2f}")
                     logger.info(f"Stop Loss: ${stop_loss:.2f}")
                     logger.info(f"Position Size: {position_size} shares")
-                    logger.info(f"Profit Target: ${current_trade['profit_target']:.2f}\n")
+                    logger.info(f"Profit Target: ${profit_target:.2f}\n")
                     
                 elif short_entry:
                     stop_loss = min(orb_high, current_price * (1 + self.min_stop_distance))
                     position_size = self.calculate_position_size(current_price, stop_loss)
+                    profit_target = current_price - self.calculate_dynamic_profit_target(
+                        current_price, stop_loss, self.data['volatility'].iloc[i]
+                    )
+                    scale_out_levels = self.calculate_scale_out_levels(
+                        current_price, stop_loss, 'SHORT'
+                    )
                     current_trade = {
                         'direction': 'SHORT',
                         'entry_time': timestamps[i],
                         'entry_price': current_price,
                         'stop_loss': stop_loss,
-                        'profit_target': current_price - (stop_loss - current_price) * self.profit_target_multiplier,
-                        'position_size': position_size
+                        'profit_target': profit_target,
+                        'position_size': position_size,
+                        'scale_out_levels': scale_out_levels
                     }
                     logger.info(f"[TRADE] SHORT Entry at {timestamps[i]}")
                     logger.info(f"Entry Price: ${current_price:.2f}")
                     logger.info(f"Stop Loss: ${stop_loss:.2f}")
                     logger.info(f"Position Size: {position_size} shares")
-                    logger.info(f"Profit Target: ${current_trade['profit_target']:.2f}\n")
+                    logger.info(f"Profit Target: ${profit_target:.2f}\n")
         
         # Close any open trade at the end
         if current_trade:
@@ -316,7 +463,9 @@ def download_data(ticker, output_file):
     print(f"Data saved to {output_file}")
 
 def run_backtest(ticker, entry_mode, orb_duration=30, use_volume_filter=True,
-                trailing_stop=True, trailing_stop_activation=0.5):
+                trailing_stop=True, trailing_stop_activation=0.5,
+                use_volatility_filter=True, scale_out_levels=None,
+                profit_target_multiplier=1.5):
     """Run backtest for a single ticker and mode with specified parameters"""
     data_file = f"{ticker}_data.csv"
     if not os.path.exists(data_file):
@@ -329,7 +478,11 @@ def run_backtest(ticker, entry_mode, orb_duration=30, use_volume_filter=True,
         orb_duration=orb_duration,
         use_volume_filter=use_volume_filter,
         trailing_stop=trailing_stop,
-        trailing_stop_activation=trailing_stop_activation
+        trailing_stop_activation=trailing_stop_activation,
+        use_volatility_filter=use_volatility_filter,
+        scale_out_levels=scale_out_levels,
+        profit_target_multiplier=profit_target_multiplier,
+        ticker=ticker
     )
     trades, equity, timestamps = strategy.backtest()
     stats = strategy.analyze_performance(trades)
@@ -344,7 +497,10 @@ def run_backtest(ticker, entry_mode, orb_duration=30, use_volume_filter=True,
         'orb_duration': orb_duration,
         'use_volume_filter': use_volume_filter,
         'trailing_stop': trailing_stop,
-        'trailing_stop_activation': trailing_stop_activation
+        'trailing_stop_activation': trailing_stop_activation,
+        'use_volatility_filter': use_volatility_filter,
+        'scale_out_levels': scale_out_levels,
+        'profit_target_multiplier': profit_target_multiplier
     }
 
 def create_report_directory():
@@ -403,29 +559,20 @@ def main():
     # Create report directory
     report_dir = create_report_directory()
     
-    # Focus on best-performing tickers
-    tickers = ['XLK', 'SMH']
-    entry_modes = ['immediate', 'breakout_hold']
+    # Focus only on XLK
+    tickers = ['XLK']
+    entry_modes = ['immediate']  # Focus on immediate entry mode
     
-    # Optimized parameter combinations
+    # Use only the optimal configuration for XLK
     param_combinations = [
         {
             'orb_duration': 30,
             'use_volume_filter': True,
             'trailing_stop': True,
-            'trailing_stop_activation': 0.5
-        },
-        {
-            'orb_duration': 30,
-            'use_volume_filter': True,
-            'trailing_stop': True,
-            'trailing_stop_activation': 0.4  # Slightly more aggressive trailing stop
-        },
-        {
-            'orb_duration': 30,
-            'use_volume_filter': True,
-            'trailing_stop': True,
-            'trailing_stop_activation': 0.6  # Slightly less aggressive trailing stop
+            'trailing_stop_activation': 0.4,
+            'use_volatility_filter': False,
+            'scale_out_levels': None,
+            'profit_target_multiplier': 2.0
         }
     ]
     
@@ -444,7 +591,10 @@ def main():
                         params['orb_duration'],
                         params['use_volume_filter'],
                         params['trailing_stop'],
-                        params['trailing_stop_activation']
+                        params['trailing_stop_activation'],
+                        params['use_volatility_filter'],
+                        params['scale_out_levels'],
+                        params['profit_target_multiplier']
                     ))
         
         results = [f.result() for f in futures]
@@ -465,6 +615,9 @@ def main():
             f.write(f"Volume Filter: {params['use_volume_filter']}\n")
             f.write(f"Trailing Stop: {params['trailing_stop']}\n")
             f.write(f"Trailing Stop Activation: {params['trailing_stop_activation']}\n")
+            f.write(f"Volatility Filter: {params['use_volatility_filter']}\n")
+            f.write(f"Scale Out Levels: {params['scale_out_levels']}\n")
+            f.write(f"Profit Target Multiplier: {params['profit_target_multiplier']}\n")
             f.write("-" * 30 + "\n")
             
             # Filter results for this parameter combination

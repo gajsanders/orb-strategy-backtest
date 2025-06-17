@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 import os
+import argparse
 
 def verify_symbol(trading_client, symbol):
     """Verify if the symbol is valid and tradable"""
@@ -113,22 +114,14 @@ def download_historical_data(symbol, start_date, end_date, timeframe='5Min'):
         return None
 
 if __name__ == "__main__":
-    # Test with a shorter time period first
-    symbol = "SPY"
-    # Set the date range for May 2025
-    start_date = datetime(2025, 5, 1)
-    end_date = datetime(2025, 5, 31)
-    
-    print("Testing with historical data...")
-    print(f"Using date range: {start_date} to {end_date}")
-    df = download_historical_data(symbol, start_date, end_date)
-    
-    if df is not None:
-        print("\nFirst few rows of data:")
-        print(df.head())
-        print(f"\nTotal bars: {len(df)}")
-        
-        # Print time range of data
-        print("\nData time range:")
-        print(f"Start: {df['timestamp'].min()}")
-        print(f"End: {df['timestamp'].max()}") 
+    parser = argparse.ArgumentParser(description="Download historical data for a symbol.")
+    parser.add_argument("symbol", type=str, help="Stock symbol (e.g., SPY)")
+    parser.add_argument("start_date", type=str, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("end_date", type=str, help="End date (YYYY-MM-DD)")
+    parser.add_argument("--timeframe", type=str, default="5Min", help="Timeframe (default: 5Min)")
+    args = parser.parse_args()
+
+    start_dt = datetime.strptime(args.start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(args.end_date, "%Y-%m-%d")
+
+    download_historical_data(args.symbol, start_dt, end_dt, timeframe=args.timeframe) 
